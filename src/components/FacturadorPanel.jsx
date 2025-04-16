@@ -23,6 +23,7 @@ const FacturadorPanel = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const comprobanteRef = useRef(null);
 
@@ -106,7 +107,7 @@ const FacturadorPanel = () => {
   };
 
   // Generar PDF del comprobante
-  const generarPDF = async (returnBlob = false) => {
+  const generarPDF = async () => {
     if (!comprobanteRef.current || carrito.length === 0) return;
 
     try {
@@ -124,16 +125,13 @@ const FacturadorPanel = () => {
 
       pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
 
-      if (!returnBlob) {
-        const nombreArchivo = `${tipoDocumento || "Comprobante"}_${new Date()
-          .toISOString()
-          .slice(0, 10)}.pdf`;
-        pdf.save(nombreArchivo);
-        setSuccess(`✅ ${tipoDocumento || "Comprobante"} generado exitosamente`);
-        return nombreArchivo;
-      }
-
-      return pdf.output("blob");
+      const nombreArchivo = `${tipoDocumento || "Comprobante"}_${new Date()
+        .toISOString()
+        .slice(0, 10)}.pdf`;
+      pdf.save(nombreArchivo);
+      setSuccess(`✅ ${tipoDocumento || "Comprobante"} generado exitosamente`);
+      
+      return pdf.output("blob"); // Retornamos el blob para usar en handleCobrar
     } catch (error) {
       console.error("Error al generar PDF:", error);
       setError("❌ Error al generar el documento");
@@ -142,13 +140,18 @@ const FacturadorPanel = () => {
   };
 
   const handleCobrar = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    
     if (carrito.length === 0) {
       setError("No hay productos en el carrito");
+      setIsSubmitting(false);
       return;
     }
 
     if (!cajaAbierta?.id) {
       setError("No hay caja abierta. Abra caja primero.");
+      setIsSubmitting(false);
       return;
     }
 
@@ -156,13 +159,13 @@ const FacturadorPanel = () => {
       setLoading(true);
       setError(null);
       
-      // 1. Generar PDF
-      const pdfBlob = await generarPDF(true);
+      // 1. Generar PDF (sin esperar, ya que no necesitamos el blob)
+      await generarPDF();
       
-      // 2. Registrar movimiento
+      // 2. Preparar movimiento (sin IVA incluido en el monto)
       const movimiento = {
         tipo: "ingreso",
-        monto: total * 1.21,
+        monto: total, // Enviamos el total SIN IVA
         descripcion: `Venta ${tipoDocumento || "Recibo"} ${clienteSeleccionado?.nombre || "Consumidor Final"}`,
         formaPago: medioPago || "efectivo",
         productos: carrito.map(item => ({
@@ -170,16 +173,14 @@ const FacturadorPanel = () => {
           nombre: item.titulo,
           cantidad: item.cantidad,
           precio: item.precioVenta,
+          subtotal: item.precioVenta * item.cantidad
         })),
+        iva: total * 0.21, // Guardamos el IVA por separado
+        totalConIva: total * 1.21 // Y el total con IVA
       };
 
+      // 3. Registrar movimiento (una sola vez)
       await registrarMovimiento(cajaAbierta.id, movimiento);
-
-      // 3. Actualizar saldo en caja
-      const cajaRef = doc(db, "caja", cajaAbierta.id);
-      await updateDoc(cajaRef, {
-        saldoActual: increment(total * 1.21)
-      });
 
       // 4. Resetear estado
       setCarrito([]);
@@ -192,6 +193,7 @@ const FacturadorPanel = () => {
       setError(`❌ Error al registrar cobro: ${error.message}`);
     } finally {
       setLoading(false);
+      setIsSubmitting(false);
     }
   };
 

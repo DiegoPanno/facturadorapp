@@ -8,6 +8,7 @@ import {
     doc, 
     updateDoc, 
     serverTimestamp, 
+    writeBatch,
     increment,
     limit, // Añade esta importación
     getDoc // Añade esta importación si no está
@@ -48,20 +49,29 @@ import {
   export const cerrarCaja = async (idCaja, saldoFinal) => {
     try {
       const cajaRef = doc(db, "caja", idCaja);
-      
-      // Obtener todos los movimientos de esta caja
       const movimientos = await obtenerMovimientosCaja(idCaja);
       
-      const totalVentas = movimientos
-        .filter(mov => mov.tipo === 'ingreso')
-        .reduce((sum, mov) => sum + mov.monto, 0);
+      // Calcular totales de forma más robusta
+      const { ingresos, egresos } = movimientos.reduce((acc, mov) => {
+        const monto = Number(mov.monto) || 0;
+        if (mov.tipo === 'ingreso') acc.ingresos += monto;
+        else acc.egresos += monto;
+        return acc;
+      }, { ingresos: 0, egresos: 0 });
+  
+      const saldoFinalNum = Number(saldoFinal) || 0;
+      const cajaSnap = await getDoc(cajaRef);
+      const saldoInicial = cajaSnap.data().saldoInicial || 0;
       
+      const diferencia = saldoFinalNum - (saldoInicial + ingresos - egresos);
+  
       await updateDoc(cajaRef, {
         estado: "cerrada",
         fechaCierre: serverTimestamp(),
-        saldoFinal: Number(saldoFinal),
-        totalVentas,
-        diferencia: Number(saldoFinal) - (totalVentas + (await getDoc(cajaRef)).data().saldoInicial)
+        saldoFinal: saldoFinalNum,
+        totalVentas: ingresos,
+        totalEgresos: egresos,
+        diferencia: diferencia
       });
       
       return true;
@@ -74,43 +84,56 @@ import {
   // REGISTRAR MOVIMIENTO (mejorada)
   export const registrarMovimiento = async (idCaja, movimiento) => {
     try {
-      // Validación de datos
+      // Validaciones más estrictas
       if (!idCaja) throw new Error("ID de caja no proporcionado");
       if (!movimiento || typeof movimiento !== 'object') {
         throw new Error("Datos de movimiento inválidos");
       }
   
-      // Validar campos requeridos
-      const requiredFields = ['tipo', 'monto', 'descripcion', 'formaPago'];
-      for (const field of requiredFields) {
-        if (!movimiento[field]) {
-          throw new Error(`Campo requerido faltante: ${field}`);
-        }
-      }
+      // Convertir monto a número y validar
+      const monto = Number(movimiento.monto);
+      if (isNaN(monto)) throw new Error("Monto no es un número válido");
+      if (monto <= 0) throw new Error("Monto debe ser positivo");
   
+      // Obtener caja actual primero para evitar inconsistencias
+      const cajaRef = doc(db, "caja", idCaja);
+      const cajaSnap = await getDoc(cajaRef);
+      if (!cajaSnap.exists()) throw new Error("Caja no encontrada");
+      
+      const cajaActual = cajaSnap.data();
+      const nuevoSaldo = movimiento.tipo === 'ingreso' 
+        ? cajaActual.saldoActual + monto 
+        : cajaActual.saldoActual - monto;
+  
+      // Usar batch para operación atómica
+      const batch = writeBatch(db);
+      
+      // Registrar movimiento
       const movimientosRef = collection(db, "caja", idCaja, "movimientos");
       const movimientoData = {
         ...movimiento,
         fecha: serverTimestamp(),
-        monto: Number(movimiento.monto),
-        usuario: "usuario_actual" // Asegúrate de usar el usuario real
+        monto: monto,
+        usuario: "usuario_actual" // Reemplazar con usuario real
       };
-  
-      const docRef = await addDoc(movimientosRef, movimientoData);
+      const newMovRef = doc(movimientosRef);
+      batch.set(newMovRef, movimientoData);
       
       // Actualizar saldo en caja
-      await updateDoc(doc(db, "caja", idCaja), {
-        saldoActual: increment(movimiento.tipo === 'ingreso' ? movimiento.monto : -movimiento.monto)
+      batch.update(cajaRef, {
+        saldoActual: nuevoSaldo,
+        ultimaActualizacion: serverTimestamp()
       });
   
-      return docRef.id;
+      await batch.commit();
+      return newMovRef.id;
     } catch (error) {
       console.error("Error detallado al registrar movimiento:", {
         error,
         idCaja,
         movimiento
       });
-      throw new Error(`Error al registrar movimiento: ${error.message}`);
+      throw error;
     }
   };
   

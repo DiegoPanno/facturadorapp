@@ -20,7 +20,9 @@ const MovimientoForm = ({ onAgregarMovimiento}) => {
     monto: '',
     descripcion: '',
     formaPago: 'efectivo',
-    fecha: new Date().toISOString().slice(0, 10)
+    fecha: new Date().toISOString().slice(0, 10),
+    porcentajeIva: 21, // Valor por defecto
+    productos: []
   });
 
   const handleInputChange = (e) => {
@@ -31,34 +33,40 @@ const MovimientoForm = ({ onAgregarMovimiento}) => {
     });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!formData.monto || isNaN(formData.monto)) {
-      alert("Por favor ingrese un monto válido");
-      return;
-    }
+  // En el componente MovimientoForm, agregar validación:
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  
+  // Validación adicional
+  if (formData.monto <= 0) {
+    alert("El monto debe ser mayor que cero");
+    return;
+  }
+  
+  if (!formData.descripcion || formData.descripcion.trim() === "") {
+    alert("Por favor ingrese una descripción válida");
+    return;
+  }
+
+  try {
+    await onAgregarMovimiento({
+      ...formData,
+      monto: parseFloat(formData.monto),
+      fecha: new Date().toISOString()
+    });
     
-    try {
-      await onAgregarMovimiento({
-        ...formData,
-        monto: parseFloat(formData.monto),
-        fecha: new Date().toISOString()
-      });
-      
-      // Resetear formulario después de éxito
-      setFormData({
-        tipo: 'ingreso',
-        monto: '',
-        descripcion: '',
-        formaPago: 'efectivo',
-        fecha: new Date().toISOString().slice(0, 10)
-      });
-    } catch (error) {
-      // El error ya es manejado por el componente padre
-    }
-  };
-
-
+    // Resetear formulario
+    setFormData({
+      tipo: 'ingreso',
+      monto: '',
+      descripcion: '',
+      formaPago: 'efectivo',
+      fecha: new Date().toISOString().slice(0, 10)
+    });
+  } catch (error) {
+    console.error("Error al registrar movimiento:", error);
+  }
+};
 
 
   return (
