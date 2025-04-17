@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
-import { addDoc, collection, doc, updateDoc, increment } from "firebase/firestore";
-import { db } from "../firebase";
 import { obtenerProductos } from "../services/productService";
 import Carrito from "./Carrito";
 import ClientesPanel from "./ClientesPanel";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
-import { registrarMovimiento, obtenerCajaAbierta } from "../services/cajaService";
+import {
+  registrarMovimiento,
+  obtenerCajaAbierta,
+} from "../services/cajaService";
 
 const FacturadorPanel = () => {
   // Estados del componente
@@ -25,6 +26,9 @@ const FacturadorPanel = () => {
   const [success, setSuccess] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const getSubtotal = () => total / 1.21;
+  const getIVA = () => total - getSubtotal();
+
   const comprobanteRef = useRef(null);
 
   // Verificar caja abierta al cargar el componente
@@ -40,6 +44,14 @@ const FacturadorPanel = () => {
     };
     verificarCaja();
   }, []);
+
+  useEffect(() => {
+    const nuevoTotal = carrito.reduce(
+      (acc, producto) => acc + producto.precioVenta * producto.cantidad * 1.21,
+      0
+    );
+    setTotal(nuevoTotal);
+  }, [carrito]);
 
   // Cargar productos al montar el componente
   useEffect(() => {
@@ -61,12 +73,12 @@ const FacturadorPanel = () => {
 
   // Filtrar productos basado en el término de búsqueda
   const productosFiltrados = searchTerm
-  ? productos.filter(
-      (prod) =>
-        prod.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        prod.id.includes(searchTerm)
-    )
-  : [];
+    ? productos.filter(
+        (prod) =>
+          prod.titulo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          prod.id.includes(searchTerm)
+      )
+    : [];
 
   // Calcular el total cuando cambia el carrito
   useEffect(() => {
@@ -103,7 +115,9 @@ const FacturadorPanel = () => {
       setCarrito(carrito.filter((item) => item.id !== id));
       return;
     }
-    setCarrito(carrito.map((item) => (item.id === id ? { ...item, cantidad } : item)));
+    setCarrito(
+      carrito.map((item) => (item.id === id ? { ...item, cantidad } : item))
+    );
   };
 
   // Generar PDF del comprobante
@@ -130,7 +144,7 @@ const FacturadorPanel = () => {
         .slice(0, 10)}.pdf`;
       pdf.save(nombreArchivo);
       setSuccess(`✅ ${tipoDocumento || "Comprobante"} generado exitosamente`);
-      
+
       return pdf.output("blob"); // Retornamos el blob para usar en handleCobrar
     } catch (error) {
       console.error("Error al generar PDF:", error);
@@ -139,55 +153,54 @@ const FacturadorPanel = () => {
     }
   };
 
+ 
   const handleCobrar = async () => {
     if (isSubmitting) return;
     setIsSubmitting(true);
-    
+  
     if (carrito.length === 0) {
       setError("No hay productos en el carrito");
       setIsSubmitting(false);
       return;
     }
-
+  
     if (!cajaAbierta?.id) {
       setError("No hay caja abierta. Abra caja primero.");
       setIsSubmitting(false);
       return;
     }
-
+  
     try {
       setLoading(true);
       setError(null);
-      
-      // 1. Generar PDF (sin esperar, ya que no necesitamos el blob)
+  
       await generarPDF();
-      
-      // 2. Preparar movimiento (sin IVA incluido en el monto)
+  
+      // Usa las funciones que ya tienes definidas
       const movimiento = {
         tipo: "ingreso",
-        monto: total, // Enviamos el total SIN IVA
-        descripcion: `Venta ${tipoDocumento || "Recibo"} ${clienteSeleccionado?.nombre || "Consumidor Final"}`,
+        monto: getSubtotal(), // Usamos la función getSubtotal()
+        descripcion: `Venta ${tipoDocumento || "Recibo"} ${
+          clienteSeleccionado?.nombre || "Consumidor Final"
+        }`,
         formaPago: medioPago || "efectivo",
-        productos: carrito.map(item => ({
+        productos: carrito.map((item) => ({
           id: item.id,
           nombre: item.titulo,
           cantidad: item.cantidad,
           precio: item.precioVenta,
-          subtotal: item.precioVenta * item.cantidad
+          subtotal: item.precioVenta * item.cantidad,
         })),
-        iva: total * 0.21, // Guardamos el IVA por separado
-        totalConIva: total * 1.21 // Y el total con IVA
+        iva: getIVA(), // Usamos la función getIVA()
+        totalConIva: total, // El total que ya incluye IVA
       };
-
-      // 3. Registrar movimiento (una sola vez)
+  
       await registrarMovimiento(cajaAbierta.id, movimiento);
-
-      // 4. Resetear estado
+  
       setCarrito([]);
       setTotal(0);
       setCobroRealizado(true);
       setSuccess("✅ Venta registrada correctamente en caja");
-      
     } catch (error) {
       console.error("Error al registrar cobro:", error);
       setError(`❌ Error al registrar cobro: ${error.message}`);
@@ -197,8 +210,19 @@ const FacturadorPanel = () => {
     }
   };
 
+
+
+
   // Componente de vista previa del comprobante
-  const VistaPreviaRecibo = () => (
+  const VistaPreviaRecibo = ({
+    total,
+    subtotal,
+    iva,
+    carrito,
+    tipoDocumento,
+    medioPago,
+    clienteSeleccionado,
+  }) => (
     <div
       ref={comprobanteRef}
       style={{
@@ -212,7 +236,15 @@ const FacturadorPanel = () => {
       }}
     >
       {/* Encabezado */}
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px", borderBottom: "2px solid #333", paddingBottom: "10px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: "20px",
+          borderBottom: "2px solid #333",
+          paddingBottom: "10px",
+        }}
+      >
         <div>
           <h2 style={{ margin: 0 }}>Tienda libre de gluten</h2>
           <p style={{ margin: "5px 0" }}>CUIT: 20-26703609-9</p>
@@ -221,27 +253,56 @@ const FacturadorPanel = () => {
         </div>
         <div style={{ textAlign: "right" }}>
           <h2 style={{ margin: 0 }}>{tipoDocumento || "COMPROBANTE"}</h2>
-          <p style={{ margin: "5px 0" }}>N°: {Math.floor(Math.random() * 10000).toString().padStart(8, "0")}</p>
-          <p style={{ margin: "5px 0" }}>Fecha: {new Date().toLocaleDateString("es-AR")}</p>
-          <p style={{ margin: "5px 0" }}>Hora: {new Date().toLocaleTimeString("es-AR")}</p>
+          <p style={{ margin: "5px 0" }}>
+            N°:{" "}
+            {Math.floor(Math.random() * 10000)
+              .toString()
+              .padStart(8, "0")}
+          </p>
+          <p style={{ margin: "5px 0" }}>
+            Fecha: {new Date().toLocaleDateString("es-AR")}
+          </p>
+          <p style={{ margin: "5px 0" }}>
+            Hora: {new Date().toLocaleTimeString("es-AR")}
+          </p>
         </div>
       </div>
 
       {/* Datos del Cliente */}
-      <div style={{ marginBottom: "20px", padding: "10px", backgroundColor: "#f9f9f9", borderRadius: "4px" }}>
-        <h3 style={{ marginBottom: "10px", borderBottom: "1px solid #ddd" }}>Datos del Cliente</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+      <div
+        style={{
+          marginBottom: "20px",
+          padding: "10px",
+          backgroundColor: "#f9f9f9",
+          borderRadius: "4px",
+        }}
+      >
+        <h3 style={{ marginBottom: "10px", borderBottom: "1px solid #ddd" }}>
+          Datos del Cliente
+        </h3>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "10px",
+          }}
+        >
           <div>
             <p style={{ margin: "5px 0" }}>
-              <strong>Nombre:</strong> {clienteSeleccionado ? `${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido}` : "CONSUMIDOR FINAL"}
+              <strong>Nombre:</strong>{" "}
+              {clienteSeleccionado
+                ? `${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido}`
+                : "CONSUMIDOR FINAL"}
             </p>
             <p style={{ margin: "5px 0" }}>
-              <strong>CUIT/DNI:</strong> {clienteSeleccionado?.cuit || "11-11111111-1"}
+              <strong>CUIT/DNI:</strong>{" "}
+              {clienteSeleccionado?.cuit || "11-11111111-1"}
             </p>
           </div>
           <div>
             <p style={{ margin: "5px 0" }}>
-              <strong>Dirección:</strong> {clienteSeleccionado?.direccion || "-"}
+              <strong>Dirección:</strong>{" "}
+              {clienteSeleccionado?.direccion || "-"}
             </p>
             <p style={{ margin: "5px 0" }}>
               <strong>Teléfono:</strong> {clienteSeleccionado?.telefono || "-"}
@@ -252,14 +313,61 @@ const FacturadorPanel = () => {
 
       {/* Detalle de Productos */}
       <h3 style={{ marginBottom: "10px" }}>Detalle de Productos/Servicios</h3>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "20px", fontSize: "14px" }}>
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "collapse",
+          marginBottom: "20px",
+          fontSize: "14px",
+        }}
+      >
         <thead>
           <tr style={{ backgroundColor: "#f5f5f5" }}>
-            <th style={{ padding: "8px", textAlign: "left", borderBottom: "1px solid #ddd" }}>Código</th>
-            <th style={{ padding: "8px", textAlign: "left", borderBottom: "1px solid #ddd" }}>Descripción</th>
-            <th style={{ padding: "8px", textAlign: "center", borderBottom: "1px solid #ddd" }}>Cantidad</th>
-            <th style={{ padding: "8px", textAlign: "right", borderBottom: "1px solid #ddd" }}>P. Unitario</th>
-            <th style={{ padding: "8px", textAlign: "right", borderBottom: "1px solid #ddd" }}>Subtotal</th>
+            <th
+              style={{
+                padding: "8px",
+                textAlign: "left",
+                borderBottom: "1px solid #ddd",
+              }}
+            >
+              Código
+            </th>
+            <th
+              style={{
+                padding: "8px",
+                textAlign: "left",
+                borderBottom: "1px solid #ddd",
+              }}
+            >
+              Descripción
+            </th>
+            <th
+              style={{
+                padding: "8px",
+                textAlign: "center",
+                borderBottom: "1px solid #ddd",
+              }}
+            >
+              Cantidad
+            </th>
+            <th
+              style={{
+                padding: "8px",
+                textAlign: "right",
+                borderBottom: "1px solid #ddd",
+              }}
+            >
+              P. Unitario
+            </th>
+            <th
+              style={{
+                padding: "8px",
+                textAlign: "right",
+                borderBottom: "1px solid #ddd",
+              }}
+            >
+              Subtotal
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -270,9 +378,15 @@ const FacturadorPanel = () => {
               <tr key={producto.id} style={{ borderBottom: "1px solid #eee" }}>
                 <td style={{ padding: "8px" }}>{producto.id}</td>
                 <td style={{ padding: "8px" }}>{producto.titulo}</td>
-                <td style={{ padding: "8px", textAlign: "right" }}>{producto.cantidad}</td>
-                <td style={{ padding: "8px", textAlign: "right" }}>${precio.toFixed(2)}</td>
-                <td style={{ padding: "8px", textAlign: "right" }}>${subtotal.toFixed(2)}</td>
+                <td style={{ padding: "8px", textAlign: "right" }}>
+                  {producto.cantidad}
+                </td>
+                <td style={{ padding: "8px", textAlign: "right" }}>
+                  ${precio.toFixed(2)}
+                </td>
+                <td style={{ padding: "8px", textAlign: "right" }}>
+                  ${subtotal.toFixed(2)}
+                </td>
               </tr>
             );
           })}
@@ -280,94 +394,188 @@ const FacturadorPanel = () => {
       </table>
 
       {/* Totales */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "20px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          marginTop: "20px",
+        }}
+      >
         <div style={{ width: "300px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "5px",
+            }}
+          >
             <span>Subtotal:</span>
-            <span>${total.toFixed(2)}</span>
+            <span>${subtotal.toFixed(2)}</span>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "5px",
+            }}
+          >
             <span>IVA 21%:</span>
-            <span>${(total * 0.21).toFixed(2)}</span>
+            <span>${iva.toFixed(2)}</span>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "1.2em", fontWeight: "bold", borderTop: "1px solid #333", paddingTop: "10px", marginTop: "10px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: "1.2em",
+              fontWeight: "bold",
+              borderTop: "1px solid #333",
+              paddingTop: "10px",
+              marginTop: "10px",
+            }}
+          >
             <span>Total:</span>
-            <span>${(total * 1.21).toFixed(2)}</span>
+            <span>${total.toFixed(2)}</span>
           </div>
         </div>
       </div>
 
       {/* Medio de Pago y Observaciones */}
-      <div style={{ marginTop: "30px", paddingTop: "10px", borderTop: "1px dashed #999", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+      <div
+        style={{
+          marginTop: "30px",
+          paddingTop: "10px",
+          borderTop: "1px dashed #999",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "20px",
+        }}
+      >
         <div>
-          <p><strong>Medio de Pago:</strong> {medioPago || "No especificado"}</p>
-          <p><strong>Forma de Pago:</strong> Contado</p>
+          <p>
+            <strong>Medio de Pago:</strong> {medioPago || "No especificado"}
+          </p>
+          <p>
+            <strong>Forma de Pago:</strong> Contado
+          </p>
         </div>
         <div>
-          <p><strong>Observaciones:</strong></p>
+          <p>
+            <strong>Observaciones:</strong>
+          </p>
           <p>Gracias por su compra</p>
         </div>
       </div>
 
       {/* Pie de Página */}
-      <div style={{ marginTop: "40px", paddingTop: "10px", borderTop: "1px solid #333", fontSize: "0.8em", textAlign: "center" }}>
+      <div
+        style={{
+          marginTop: "40px",
+          paddingTop: "10px",
+          borderTop: "1px solid #333",
+          fontSize: "0.8em",
+          textAlign: "center",
+        }}
+      >
         <p>Este documento no válido como factura</p>
         <p>Original - Cliente / Duplicado - Archivo</p>
       </div>
     </div>
   );
 
+  // Función para actualizar el precio de un producto en el carrito
+  const handleActualizarPrecio = (productoId, nuevoPrecio) => {
+    setCarrito(
+      carrito.map((item) =>
+        item.id === productoId ? { ...item, precioVenta: nuevoPrecio } : item
+      )
+    );
+  };
+
+  // Función para eliminar un producto del carrito
+  const handleEliminarProducto = (productoId) => {
+    setCarrito(carrito.filter((item) => item.id !== productoId));
+  };
+
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "20px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem", fontFamily: "Arial, sans-serif" }}>
+    <div
+      style={{
+        minHeight: "100vh", // Ocupa toda la altura visible
+        width: "95vw", // Ocupa todo el ancho visible
+        margin: "0 auto",
+        padding: "20px",
+        display: "grid",
+        gridTemplateColumns: "2fr 3fr", // Más espacio para el carrito
+        gap: "2rem",
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       {/* Columna izquierda - Productos y búsqueda */}
       <div>
-        <h2 style={{ marginBottom: "1.5rem", color: "#333", borderBottom: "2px solid #4caf50", paddingBottom: "10px" }}>Facturación</h2>
+        <h2
+          style={{
+            marginBottom: "1.5rem",
+            color: "#333",
+            borderBottom: "2px solid #4caf50",
+            paddingBottom: "10px",
+          }}
+        >
+          Facturación
+        </h2>
 
         {/* Estado de caja */}
         {cajaAbierta ? (
-          <div style={{ 
-            padding: "10px", 
-            marginBottom: "1rem", 
-            backgroundColor: "#e8f5e9",
-            borderRadius: "4px",
-            border: "1px solid #c8e6c9"
-          }}>
-            <strong>Caja abierta:</strong> Saldo actual: ${cajaAbierta.saldoActual?.toFixed(2)}
+          <div
+            style={{
+              padding: "10px",
+              marginBottom: "1rem",
+              backgroundColor: "#e8f5e9",
+              borderRadius: "4px",
+              border: "1px solid #c8e6c9",
+            }}
+          >
+            <strong>Caja abierta:</strong> Saldo actual: $
+            {cajaAbierta.saldoActual?.toFixed(2)}
           </div>
         ) : (
-          <div style={{ 
-            padding: "10px", 
-            marginBottom: "1rem", 
-            backgroundColor: "#ffebee",
-            borderRadius: "4px",
-            border: "1px solid #ef9a9a"
-          }}>
+          <div
+            style={{
+              padding: "10px",
+              marginBottom: "1rem",
+              backgroundColor: "#ffebee",
+              borderRadius: "4px",
+              border: "1px solid #ef9a9a",
+            }}
+          >
             <strong>Caja cerrada:</strong> No se pueden registrar ventas
           </div>
         )}
 
         {/* Mostrar mensajes de error/success */}
         {error && (
-          <div style={{ 
-            padding: "10px", 
-            marginBottom: "1rem", 
-            backgroundColor: "#ffebee",
-            borderRadius: "4px",
-            border: "1px solid #ef9a9a",
-            color: "#c62828"
-          }}>
+          <div
+            style={{
+              padding: "10px",
+              marginBottom: "1rem",
+              backgroundColor: "#ffebee",
+              borderRadius: "4px",
+              border: "1px solid #ef9a9a",
+              color: "#c62828",
+            }}
+          >
             {error}
           </div>
         )}
         {success && (
-          <div style={{ 
-            padding: "10px", 
-            marginBottom: "1rem", 
-            backgroundColor: "#e8f5e9",
-            borderRadius: "4px",
-            border: "1px solid #c8e6c9",
-            color: "#2e7d32"
-          }}>
+          <div
+            style={{
+              padding: "10px",
+              marginBottom: "1rem",
+              backgroundColor: "#e8f5e9",
+              borderRadius: "4px",
+              border: "1px solid #c8e6c9",
+              color: "#2e7d32",
+            }}
+          >
             {success}
           </div>
         )}
@@ -392,9 +600,25 @@ const FacturadorPanel = () => {
 
         {/* Listado de productos filtrados */}
         {searchTerm && (
-          <div style={{ border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fff", overflow: "hidden", marginBottom: "1.5rem", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
+          <div
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              backgroundColor: "#fff",
+              overflow: "hidden",
+              marginBottom: "1.5rem",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            }}
+          >
             {productosFiltrados.length === 0 ? (
-              <div style={{ padding: "20px", textAlign: "center", color: "#666", backgroundColor: "#f9f9f9" }}>
+              <div
+                style={{
+                  padding: "20px",
+                  textAlign: "center",
+                  color: "#666",
+                  backgroundColor: "#f9f9f9",
+                }}
+              >
                 No se encontraron productos
               </div>
             ) : (
@@ -414,14 +638,30 @@ const FacturadorPanel = () => {
                   >
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: "bold" }}>{prod.titulo}</div>
-                      <div style={{ color: "#666", fontSize: "0.9rem", display: "flex", gap: "10px", marginTop: "5px" }}>
+                      <div
+                        style={{
+                          color: "#666",
+                          fontSize: "0.9rem",
+                          display: "flex",
+                          gap: "10px",
+                          marginTop: "5px",
+                        }}
+                      >
                         <span>Código: {prod.id}</span>
                         <span>|</span>
                         <span>Stock: {prod.stock || 0}</span>
                       </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <span style={{ fontWeight: "bold" }}>${prod.precioVenta.toFixed(2)}</span>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                      }}
+                    >
+                      <span style={{ fontWeight: "bold" }}>
+                        ${prod.precioVenta.toFixed(2)}
+                      </span>
                       <button
                         onClick={() => handleAgregarCarrito(prod)}
                         style={{
@@ -456,35 +696,110 @@ const FacturadorPanel = () => {
       <div>
         {/* Carrito de compras */}
         <div style={{ marginBottom: "1.5rem" }}>
-          <Carrito carrito={carrito} handleActualizarCantidad={handleActualizarCantidad} />
+          <Carrito
+            carrito={carrito}
+            handleActualizarCantidad={handleActualizarCantidad}
+            handleActualizarPrecio={handleActualizarPrecio}
+            handleEliminarProducto={handleEliminarProducto}
+          />
         </div>
 
         {/* Resumen y opciones */}
-        <div style={{ padding: "20px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fff", marginBottom: "1.5rem", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
-          <h3 style={{ marginBottom: "1rem", paddingBottom: "10px", borderBottom: "1px solid #eee" }}>Resumen</h3>
+        <div
+          style={{
+            padding: "20px",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            backgroundColor: "#fff",
+            marginBottom: "1.5rem",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}
+        >
+          <h3
+            style={{
+              marginBottom: "1rem",
+              paddingBottom: "10px",
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            Resumen
+          </h3>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #eee" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "10px 0",
+              borderBottom: "1px solid #eee",
+            }}
+          >
             <span style={{ fontWeight: "bold" }}>Subtotal:</span>
-            <span>${total.toFixed(2)}</span>
+            <span>${getSubtotal().toFixed(2)}</span>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #eee" }}>
-            <span style={{ fontWeight: "bold" }}>IVA 21%:</span>
-            <span>${(total * 0.21).toFixed(2)}</span>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "10px 0",
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            <span style={{ fontWeight: "bold" }}>IVA (21%):</span>
+            <span>${getIVA().toFixed(2)}</span>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", marginTop: "10px" }}>
-            <span style={{ fontSize: "1.2rem", fontWeight: "bold" }}>Total:</span>
-            <span style={{ fontSize: "1.2rem", fontWeight: "bold" }}>${(total * 1.21).toFixed(2)}</span>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "10px 0",
+              marginTop: "10px",
+            }}
+          >
+            <span style={{ fontSize: "1.2rem", fontWeight: "bold" }}>
+              Total:
+            </span>
+            <span style={{ fontSize: "1.2rem", fontWeight: "bold" }}>
+              ${total.toFixed(2)}
+            </span>
           </div>
         </div>
 
         {/* Opciones de documento */}
-        <div style={{ padding: "20px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fff", marginBottom: "1.5rem", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
-          <h3 style={{ marginBottom: "1rem", paddingBottom: "10px", borderBottom: "1px solid #eee" }}>Configuración del Documento</h3>
+        <div
+          style={{
+            padding: "20px",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            backgroundColor: "#fff",
+            marginBottom: "1.5rem",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}
+        >
+          <h3
+            style={{
+              marginBottom: "1rem",
+              paddingBottom: "10px",
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            Configuración del Documento
+          </h3>
 
           <div style={{ marginBottom: "1rem" }}>
-            <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>Tipo de documento</label>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "0.5rem",
+                fontWeight: "bold",
+              }}
+            >
+              Tipo de documento
+            </label>
             <select
               value={tipoDocumento}
               onChange={(e) => setTipoDocumento(e.target.value)}
@@ -498,15 +813,23 @@ const FacturadorPanel = () => {
               }}
             >
               <option value="">Seleccionar tipo</option>
-              <option value="Factura A">Factura A</option>
-              <option value="Factura B">Factura B</option>
+              {/*<option value="Factura A">Factura A</option>*/}
+              <option value="Factura C">Factura B</option>
               <option value="Recibo">Recibo</option>
               <option value="Nota de Crédito">Nota de Crédito</option>
             </select>
           </div>
 
           <div>
-            <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold" }}>Medio de pago</label>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "0.5rem",
+                fontWeight: "bold",
+              }}
+            >
+              Medio de pago
+            </label>
             <select
               value={medioPago}
               onChange={(e) => setMedioPago(e.target.value)}
@@ -523,7 +846,9 @@ const FacturadorPanel = () => {
               <option value="Efectivo">Efectivo</option>
               <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
               <option value="Tarjeta de Débito">Tarjeta de Débito</option>
-              <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+              <option value="Transferencia Bancaria">
+                Transferencia Bancaria
+              </option>
               <option value="Mercado Pago">Mercado Pago</option>
             </select>
           </div>
@@ -545,14 +870,19 @@ const FacturadorPanel = () => {
               fontWeight: "bold",
               fontSize: "1rem",
               transition: "background-color 0.2s",
-              ":hover": { backgroundColor: carrito.length === 0 ? "#cccccc" : "#0b7dda" },
+              ":hover": {
+                backgroundColor: carrito.length === 0 ? "#cccccc" : "#0b7dda",
+              },
             }}
           >
             {mostrarVistaPrevia ? "Ocultar Vista" : "Vista Previa"}
           </button>
 
           <button
-            onClick={() => { setCarrito([]); setClienteSeleccionado(null); }}
+            onClick={() => {
+              setCarrito([]);
+              setClienteSeleccionado(null);
+            }}
             disabled={carrito.length === 0}
             style={{
               padding: "12px",
@@ -564,7 +894,9 @@ const FacturadorPanel = () => {
               fontWeight: "bold",
               fontSize: "1rem",
               transition: "background-color 0.2s",
-              ":hover": { backgroundColor: carrito.length === 0 ? "#cccccc" : "#d32f2f" },
+              ":hover": {
+                backgroundColor: carrito.length === 0 ? "#cccccc" : "#d32f2f",
+              },
             }}
           >
             Limpiar Todo
@@ -574,23 +906,53 @@ const FacturadorPanel = () => {
         {/* Vista previa y generación de PDF */}
         {mostrarVistaPrevia && carrito.length > 0 && (
           <div style={{ marginTop: "1.5rem" }}>
-            <VistaPreviaRecibo />
+            <VistaPreviaRecibo
+              total={total}
+              subtotal={getSubtotal()}
+              iva={getIVA()}
+              carrito={carrito}
+              tipoDocumento={tipoDocumento}
+              medioPago={medioPago}
+              clienteSeleccionado={clienteSeleccionado}
+            />
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "1rem", marginTop: "1rem" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "1rem",
+                marginTop: "1rem",
+              }}
+            >
               <button
                 onClick={handleCobrar}
-                disabled={carrito.length === 0 || cobroRealizado || !cajaAbierta || loading}
+                disabled={
+                  carrito.length === 0 ||
+                  cobroRealizado ||
+                  !cajaAbierta ||
+                  loading
+                }
                 style={{
                   padding: "12px 24px",
-                  backgroundColor: carrito.length === 0 || cobroRealizado || !cajaAbierta ? "#cccccc" : "#4caf50",
+                  backgroundColor:
+                    carrito.length === 0 || cobroRealizado || !cajaAbierta
+                      ? "#cccccc"
+                      : "#4caf50",
                   color: "white",
                   border: "none",
                   borderRadius: "4px",
-                  cursor: carrito.length === 0 || cobroRealizado || !cajaAbierta ? "not-allowed" : "pointer",
+                  cursor:
+                    carrito.length === 0 || cobroRealizado || !cajaAbierta
+                      ? "not-allowed"
+                      : "pointer",
                   fontWeight: "bold",
                 }}
               >
-                {loading ? "Procesando..." : cobroRealizado ? "Cobrado" : "Registrar Cobro"}
+                {loading
+                  ? "Procesando..."
+                  : cobroRealizado
+                  ? "Cobrado"
+                  : "Registrar Cobro"}
               </button>
               <button
                 onClick={generarPDF}
@@ -605,7 +967,9 @@ const FacturadorPanel = () => {
                   fontWeight: "bold",
                   fontSize: "1rem",
                   transition: "background-color 0.2s",
-                  ":hover": { backgroundColor: loading ? "#cccccc" : "#3e8e41" },
+                  ":hover": {
+                    backgroundColor: loading ? "#cccccc" : "#3e8e41",
+                  },
                 }}
               >
                 Generar PDF

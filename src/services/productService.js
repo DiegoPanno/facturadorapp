@@ -1,3 +1,4 @@
+//services/productService.js
 import { db } from "../firebase";
 import { 
   doc, 
