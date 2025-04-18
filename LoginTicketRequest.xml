@@ -1,0 +1,9 @@
+﻿<loginTicketRequest>
+  <header>
+    <uniqueId>$(Get-Date -Format "yyyyMMddHHmm")</uniqueId>
+    <generationTime>$(Get-Date -Format "yyyy-MM-ddTHH:mm:ss")</generationTime>
+    <expirationTime>$(Get-Date -Format "yyyy-MM-ddTHH:mm:ss" -UFormat "%Y-%m-%dT%H:%M:%S")</expirationTime>
+  </header>
+  <service>wsfe</service>
+</loginTicketRequest>
+
