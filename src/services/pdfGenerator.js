@@ -1,42 +1,46 @@
-const PdfPrinter = require('pdfmake');
-const fs = require('fs');
+// src/services/pdfGenerator.js
+import jsPDF from "jspdf";
 
-function generarFacturaPDF(datosFactura) {
-  const fonts = {
-    Roboto: {
-      normal: 'fonts/Roboto-Regular.ttf',
-      bold: 'fonts/Roboto-Medium.ttf',
-      italics: 'fonts/Roboto-Italic.ttf',
-      bolditalics: 'fonts/Roboto-MediumItalic.ttf'
-    }
-  };
+export const generarFacturaPDF = ({
+  razonSocial,
+  cuitEmisor,
+  domicilio,
+  nombreCliente,
+  docTipo,
+  docNro,
+  fecha,
+  productos,
+  total,
+  cae,
+  caeVto,
+  nroFactura,
+  ptoVta,
+}) => {
+  const doc = new jsPDF();
 
-  const printer = new PdfPrinter(fonts);
+  doc.setFontSize(12);
+  doc.text("FACTURA C", 90, 10);
+  doc.setFontSize(10);
+  doc.text(`Razón Social: ${razonSocial}`, 10, 20);
+  doc.text(`CUIT: ${cuitEmisor}`, 10, 26);
+  doc.text(`Domicilio: ${domicilio}`, 10, 32);
+  doc.text(`Punto de Venta: ${ptoVta.toString().padStart(5, '0')} - Nº: ${nroFactura}`, 10, 38);
+  doc.text(`Fecha de emisión: ${fecha}`, 10, 44);
 
-  const docDefinition = {
-    content: [
-      { text: 'Factura C', style: 'header' },
-      { text: `Razón Social: ${datosFactura.emisor.razonSocial}` },
-      { text: `CUIT: ${datosFactura.emisor.cuit}` },
-      { text: `Domicilio: ${datosFactura.emisor.domicilio}` },
-      { text: `Cliente: ${datosFactura.receptor.nombre}` },
-      { text: `CUIT/DNI: ${datosFactura.receptor.cuit}` },
-      { text: `Domicilio: ${datosFactura.receptor.domicilio}` },
-      { text: `Fecha de Emisión: ${datosFactura.fechaEmision}` },
-      { text: `Número de Comprobante: ${datosFactura.numeroComprobante}` },
-      { text: `CAE: ${datosFactura.cae}` },
-      { text: `Vencimiento CAE: ${datosFactura.vencimientoCae}` },
-      // Agrega más detalles según sea necesario
-    ],
-    styles: {
-      header: {
-        fontSize: 18,
-        bold: true
-      }
-    }
-  };
+  doc.text(`Cliente: ${nombreCliente}`, 10, 54);
+  doc.text(`Doc (${docTipo}): ${docNro}`, 10, 60);
 
-  const pdfDoc = printer.createPdfKitDocument(docDefinition);
-  pdfDoc.pipe(fs.createWriteStream('factura.pdf'));
-  pdfDoc.end();
-}
+  doc.text("Detalle:", 10, 70);
+  let y = 76;
+  productos.forEach((item, i) => {
+    doc.text(`${i + 1}. ${item.descripcion} - Cant: ${item.cantidad} - $${item.precio}`, 10, y);
+    y += 6;
+  });
+
+  doc.text(`TOTAL: $${total}`, 10, y + 10);
+  doc.text(`CAE: ${cae}`, 10, y + 20);
+  doc.text(`Vto CAE: ${caeVto}`, 10, y + 26);
+
+  // Guarda o devuelve el archivo
+  doc.save(`Factura-${ptoVta}-${nroFactura}.pdf`);
+};
